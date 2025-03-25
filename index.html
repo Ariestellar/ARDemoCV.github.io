@@ -1,0 +1,159 @@
+<head>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+  <script type="text/javascript" src="./libs/svd.js"></script>
+  <script type="text/javascript" src="./libs/posit1.js"></script>
+  <script type="text/javascript" src="./libs/cv.js"></script>
+  <script type="text/javascript" src="./libs/aruco.js"></script>
+  
+  <script>
+    let video, canvas, context, imageData, detector, posit;
+    let renderer, scene, camera, model, videoTexture;
+    const modelSize = 25
+
+    function onLoad() {
+      video = document.getElementById("video");
+      canvas = document.getElementById("canvas");
+      context = canvas.getContext("2d");
+
+      canvas.width = 640;
+      canvas.height = 480;
+      canvas.style.display = "block";  // Делаем canvas видимым
+      canvas.style.position = "absolute";
+      canvas.style.top = "0";
+      canvas.style.left = "0";
+      canvas.style.zIndex = "10"; // Поверх видео
+
+      navigator.mediaDevices.getUserMedia({ video: true }).then(function(stream) {
+        video.srcObject = stream;
+      }).catch(console.error);
+
+      detector = new AR.Detector();
+      posit = new POS.Posit(modelSize, canvas.width);
+
+      createScene();
+      requestAnimationFrame(tick);
+    }
+
+    function tick() {
+      requestAnimationFrame(tick);
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        snapshot();
+        const markers = detector.detect(imageData);
+        drawMarkers(markers);
+        updateScene(markers);
+        renderer.render(scene, camera);
+      }
+    }
+
+    function snapshot() {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    }
+
+    function drawMarkers(markers) {
+      context.lineWidth = 3;
+      context.strokeStyle = "red";
+      context.font = "14px Arial";
+      context.fillStyle = "red";
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      
+      markers.forEach(marker => {
+        let corners = marker.corners;
+        context.beginPath();
+        context.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < corners.length; i++) {
+          context.lineTo(corners[i].x, corners[i].y);
+        }
+        context.closePath();
+        context.stroke();
+        
+        context.fillText(`ID: ${marker.id}`, corners[0].x, corners[0].y - 5);
+      });
+    }
+
+    function createScene() {
+      renderer = new THREE.WebGLRenderer({ alpha: true });
+      renderer.setSize(canvas.width, canvas.height);
+      document.getElementById("container").appendChild(renderer.domElement);
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(40, canvas.width / canvas.height, 1, 1000);
+      scene.add(camera);
+
+      videoTexture = new THREE.VideoTexture(video);
+      let videoMaterial = new THREE.MeshBasicMaterial({ map: videoTexture, side: THREE.DoubleSide });
+      let videoPlane = new THREE.Mesh(new THREE.PlaneGeometry(640, 480), videoMaterial);
+      videoPlane.position.z = -500;
+      scene.add(videoPlane);
+      const geometry = new THREE.SphereGeometry( 2, 32, 16 ); 
+const material = new THREE.MeshBasicMaterial( { color: 0xffff00 } ); 
+const sphere = new THREE.Mesh( geometry, material ); 
+sphere.scale.set(1, 1, 1);
+sphere.position.set(0, 0, 0);
+sphere.rotation.set(0, 0, 0);
+scene.add( sphere );
+
+// const loader = new THREE.OBJLoader();
+      // loader.load('./textures/Bed.obj',
+      //   (object) => {
+      //     object.scale.set(100, 100, 100);
+      //     object.position.set(0, 0, 0);
+      //     object.rotation.set(0, 0, 0);
+      //     model = object;
+      //     scene.add(object);
+      //   },
+      //   undefined,
+      //   (error) => console.error('Error loading OBJ model:', error)
+      // );
+    }
+
+    function updateScene(markers) {
+      if (markers.length === 0) return;
+      
+      let totalTranslation = [0, 0, 0];
+      let totalRotation = [0, 0, 0];
+      let count = 0;
+
+      markers.forEach(marker => {
+        const corners = marker.corners.map(corner => {
+          return { x: corner.x - (canvas.width / 2), y: (canvas.height / 2) - corner.y };
+        });
+        const pose = posit.pose(corners);
+        if (!pose) return;
+
+        let rotationMatrix = pose.bestRotation;
+        let translationVector = pose.bestTranslation;
+
+        totalTranslation[0] += translationVector[0];
+        totalTranslation[1] += translationVector[1];
+        totalTranslation[2] += translationVector[2];
+
+        totalRotation[0] += -Math.asin(-rotationMatrix[1][2]);
+        totalRotation[1] += -Math.atan2(rotationMatrix[0][2], rotationMatrix[2][2]);
+        totalRotation[2] += Math.atan2(rotationMatrix[1][0], rotationMatrix[1][1]);
+        count++;
+      });
+
+      if (count > 0) {
+        totalTranslation = totalTranslation.map(val => val / count);
+        totalRotation = totalRotation.map(val => val / count);
+        updateModel(totalRotation, totalTranslation);
+      }
+    }
+
+    function updateModel(rotation, translation) {
+      if (!model) return;
+      model.scale.set(10, 10, 10);
+      model.position.set(translation[0], -translation[1], -translation[2]);
+      model.rotation.set(rotation[0], rotation[1], rotation[2]);
+    }
+    
+    window.onload = onLoad;
+  </script>
+</head>
+<body>
+  <video id="video" width=640 height=480 autoplay></video>
+  <div id="container" style="width: 640px; height: 480px; position: absolute; top: 0; left: 0;"></div>
+  <canvas id="canvas"></canvas>
+</body>
